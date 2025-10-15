@@ -154,9 +154,10 @@ class AutoANN:
                     X[col].nunique() > 10):  # More than 10 unique values
                     self.original_columns_info[col]['is_slider_candidate'] = True
                 
-                # NEW: Check if column is in 1-10 range (perfect for dropdown)
+                # NEW: Check if column is in 1-10 range (perfect for dropdown) - FIXED CONDITION
                 if (X[col].min() >= 1 and X[col].max() <= 10 and 
-                    X[col].dtype in ['int64', 'float64']):
+                    X[col].dtype in ['int64', 'float64'] and
+                    X[col].nunique() <= 10):  # ADDED: Maximum 10 unique values for dropdown
                     self.original_columns_info[col]['is_dropdown_candidate'] = True
                     self.original_columns_info[col]['dropdown_values'] = sorted(X[col].unique())
         
@@ -635,9 +636,11 @@ def create_unified_prediction_inputs(df, feature_names, feature_mappings, origin
                 st.caption(f"OneHot Encoded: {len(categories)} categories")
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-            # NEW: Check if column is in 1-10 range (perfect for dropdown)
+            # NEW: Check if column is in 1-10 range (perfect for dropdown) - FIXED CONDITION
             elif (col_name in original_columns_info and 
-                original_columns_info[col_name].get('is_dropdown_candidate', False)):
+                original_columns_info[col_name].get('is_dropdown_candidate', False) and
+                original_columns_info[col_name].get('dropdown_values') and
+                len(original_columns_info[col_name]['dropdown_values']) <= 10):  # ADDED: Check number of values
                 
                 # Use dropdown for this column (1-10 range)
                 col_info = original_columns_info[col_name]
