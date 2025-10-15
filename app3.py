@@ -126,6 +126,35 @@ class AutoANN:
         X = df_processed.drop(columns=[target_column])
         y = df_processed[target_column]
         
+        # Handle target variable based on problem type - FIXED REGRESSION ISSUE
+        if problem_type == "regression":
+            # For regression, ensure target is numeric with better error handling
+            try:
+                # Try to convert to numeric, coercing errors to NaN
+                y_numeric = pd.to_numeric(y, errors='coerce')
+                
+                # Check for any NaN values after conversion
+                nan_count = y_numeric.isna().sum()
+                if nan_count > 0:
+                    st.warning(f"⚠️ {nan_count} non-numeric values in target column '{target_column}' were converted to NaN")
+                    
+                    # Show the problematic values
+                    problematic_values = y[y_numeric.isna()].unique()
+                    st.write(f"Problematic values: {list(problematic_values)}")
+                    
+                    # Remove rows with NaN target values
+                    valid_mask = ~y_numeric.isna()
+                    X = X[valid_mask]
+                    y_numeric = y_numeric[valid_mask]
+                    st.info(f"Removed {nan_count} rows with invalid target values")
+                
+                y = y_numeric
+                st.write(f"🎯 **Target ({target_column})**: Regression target (numeric) - Cleaned {len(y)} samples")
+                
+            except Exception as e:
+                st.error(f"Error converting target column to numeric: {str(e)}")
+                return None, None, None, None, None
+        
         # Store original column information for prediction interface
         self.original_columns_info = {}
         for col in X.columns:
@@ -277,20 +306,18 @@ class AutoANN:
                 st.write(f"   - {orig} → {encoded}")
         
         else:  # regression
-            # For regression, ensure target is numeric
-            try:
-                y_encoded = pd.to_numeric(y, errors='coerce')
-                if y_encoded.isna().any():
-                    st.error(f"Target column '{target_column}' contains non-numeric values that cannot be converted for regression.")
-                    return None, None, None, None, None
-                st.write(f"🎯 **Target ({target_column})**: Regression target (numeric)")
-            except Exception as e:
-                st.error(f"Error converting target column to numeric: {str(e)}")
-                return None, None, None, None, None
+            # For regression, we already handled the conversion above
+            y_encoded = y
+            st.write(f"🎯 **Target ({target_column})**: Regression target (numeric) - Ready for training")
         
         # Use encoded target
         if problem_type in ["binary_classification", "multiclass_classification"]:
             y = y_encoded
+        
+        # Check if we have any data left after cleaning
+        if len(X) == 0:
+            st.error("❌ No valid data remaining after preprocessing. Please check your dataset.")
+            return None, None, None, None, None
         
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -301,12 +328,17 @@ class AutoANN:
         X_test_scaled = self.scaler.transform(X_test)
         
         st.info(f"🔧 Applied StandardScaler to all {X_train.shape[1]} features")
+        st.info(f"📊 Final dataset size: {X_train.shape[0]} training samples, {X_test.shape[0]} test samples")
         
         return X_train_scaled, X_test_scaled, y_train, y_test, X.columns.tolist()
     
     def build_model(self, input_dim, problem_type):
-        """Build ANN model based on problem type"""
+        """Build ANN model based on problem type - FIXED VERSION"""
         model = Sequential()
+        
+        # Input validation
+        if input_dim <= 0:
+            raise ValueError(f"Invalid input dimension: {input_dim}. Check if features were properly processed.")
         
         # Input layer
         model.add(Dense(64, activation='relu', input_shape=(input_dim,)))
@@ -323,6 +355,8 @@ class AutoANN:
             model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
         elif problem_type == "multiclass_classification":
             # For multi-class classification, use the determined number of classes
+            if self.num_classes is None:
+                raise ValueError("Number of classes not determined for multi-class classification")
             model.add(Dense(self.num_classes, activation='softmax'))
             model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
         else:  # regression
@@ -333,31 +367,59 @@ class AutoANN:
     
     def train_model(self, X_train, y_train, X_test, y_test, epochs=100):
         """Train the ANN model"""
-        # For multi-class classification, determine number of classes
-        if self.problem_type == "multiclass_classification":
-            self.num_classes = len(np.unique(y_train))
-        
-        self.model = self.build_model(X_train.shape[1], self.problem_type)
-        
-        early_stopping = EarlyStopping(
-            monitor='val_loss' if self.problem_type == 'regression' else 'val_accuracy',
-            patience=15,
-            restore_best_weights=True
-        )
-        
-        history = self.model.fit(
-            X_train, y_train,
-            validation_data=(X_test, y_test),
-            epochs=epochs,
-            batch_size=32,
-            callbacks=[early_stopping],
-            verbose=0
-        )
-        
-        return history
+        try:
+            # For multi-class classification, determine number of classes
+            if self.problem_type == "multiclass_classification":
+                self.num_classes = len(np.unique(y_train))
+                st.info(f"🔢 Multi-class classification detected: {self.num_classes} classes")
+            
+            # Validate input data
+            if X_train is None or len(X_train) == 0:
+                st.error("❌ No training data available")
+                return None
+                
+            if X_train.shape[1] == 0:
+                st.error("❌ No features available for training")
+                return None
+            
+            st.info(f"🏗️ Building model with {X_train.shape[1]} input features...")
+            self.model = self.build_model(X_train.shape[1], self.problem_type)
+            
+            # Display model summary
+            st.subheader("📋 Model Architecture")
+            model_summary = []
+            self.model.summary(print_fn=lambda x: model_summary.append(x))
+            st.text("\n".join(model_summary))
+            
+            early_stopping = EarlyStopping(
+                monitor='val_loss' if self.problem_type == 'regression' else 'val_accuracy',
+                patience=15,
+                restore_best_weights=True,
+                verbose=1
+            )
+            
+            st.info("🚀 Starting training...")
+            history = self.model.fit(
+                X_train, y_train,
+                validation_data=(X_test, y_test),
+                epochs=epochs,
+                batch_size=32,
+                callbacks=[early_stopping],
+                verbose=1
+            )
+            
+            st.success("✅ Training completed successfully!")
+            return history
+            
+        except Exception as e:
+            st.error(f"❌ Model training failed: {str(e)}")
+            return None
     
     def predict(self, X):
         """Make predictions"""
+        if self.model is None:
+            raise ValueError("Model not trained yet")
+            
         if self.scaler:
             X_scaled = self.scaler.transform(X)
         else:
@@ -405,7 +467,7 @@ class AutoANN:
             return probabilities
     
     def evaluate_model(self, X_test, y_test):
-        """Evaluate model performance with proper metric handling - FIXED DATA TYPE ISSUE"""
+        """Evaluate model performance with proper metric handling - FIXED REGRESSION DATA TYPE ISSUE"""
         predictions = self.predict(X_test)
         
         if self.problem_type in ["binary_classification", "multiclass_classification"]:
@@ -444,33 +506,51 @@ class AutoANN:
                 'classification_report': classification_rep
             }
         else:
-            # Regression metrics - ensure both are numeric
-            y_test_numeric = pd.to_numeric(y_test, errors='coerce')
-            predictions_numeric = pd.to_numeric(predictions, errors='coerce')
-            
-            # Remove any NaN values that might have been introduced
-            mask = ~(np.isnan(y_test_numeric) | np.isnan(predictions_numeric))
-            y_test_clean = y_test_numeric[mask]
-            predictions_clean = predictions_numeric[mask]
-            
-            if len(y_test_clean) == 0:
-                st.error("No valid numeric values for regression evaluation")
+            # Regression metrics - FIXED: Ensure both are numeric and handle edge cases
+            try:
+                # Convert to numeric, handling any conversion issues
+                y_test_numeric = pd.to_numeric(y_test, errors='coerce')
+                predictions_numeric = pd.to_numeric(predictions, errors='coerce')
+                
+                # Remove any NaN values that might have been introduced
+                mask = ~(np.isnan(y_test_numeric) | np.isnan(predictions_numeric))
+                y_test_clean = y_test_numeric[mask]
+                predictions_clean = predictions_numeric[mask]
+                
+                if len(y_test_clean) == 0:
+                    st.error("❌ No valid numeric values for regression evaluation after cleaning")
+                    return {
+                        'mse': float('nan'),
+                        'mae': float('nan'),
+                        'rmse': float('nan'),
+                        'r2': float('nan'),
+                        'valid_samples': 0
+                    }
+                
+                # Calculate metrics
+                mse = mean_squared_error(y_test_clean, predictions_clean)
+                mae = mean_absolute_error(y_test_clean, predictions_clean)
+                r2 = r2_score(y_test_clean, predictions_clean)
+                
+                st.info(f"📊 Regression evaluation on {len(y_test_clean)} valid samples (removed {len(y_test) - len(y_test_clean)} invalid samples)")
+                
+                return {
+                    'mse': mse,
+                    'mae': mae,
+                    'rmse': np.sqrt(mse),
+                    'r2': r2,
+                    'valid_samples': len(y_test_clean)
+                }
+                
+            except Exception as e:
+                st.error(f"❌ Error in regression evaluation: {str(e)}")
                 return {
                     'mse': float('nan'),
                     'mae': float('nan'),
                     'rmse': float('nan'),
-                    'r2': float('nan')
+                    'r2': float('nan'),
+                    'valid_samples': 0
                 }
-            
-            mse = mean_squared_error(y_test_clean, predictions_clean)
-            mae = mean_absolute_error(y_test_clean, predictions_clean)
-            r2 = r2_score(y_test_clean, predictions_clean)
-            return {
-                'mse': mse,
-                'mae': mae,
-                'rmse': np.sqrt(mse),
-                'r2': r2
-            }
     
     def save_model(self, filepath):
         """Save model and preprocessors"""
@@ -949,10 +1029,21 @@ def handle_data_upload():
             with col1:
                 st.write("**Basic Statistics:**")
                 if problem_type == "regression":
-                    st.write(f"Mean: {df[target_column].mean():.2f}")
-                    st.write(f"Std: {df[target_column].std():.2f}")
-                    st.write(f"Min: {df[target_column].min():.2f}")
-                    st.write(f"Max: {df[target_column].max():.2f}")
+                    # For regression, show numeric statistics
+                    try:
+                        target_numeric = pd.to_numeric(df[target_column], errors='coerce')
+                        valid_count = target_numeric.notna().sum()
+                        nan_count = target_numeric.isna().sum()
+                        
+                        st.write(f"Mean: {target_numeric.mean():.2f}")
+                        st.write(f"Std: {target_numeric.std():.2f}")
+                        st.write(f"Min: {target_numeric.min():.2f}")
+                        st.write(f"Max: {target_numeric.max():.2f}")
+                        st.write(f"Valid values: {valid_count}")
+                        if nan_count > 0:
+                            st.warning(f"Non-numeric values: {nan_count}")
+                    except:
+                        st.error("Cannot compute statistics - non-numeric values present")
                 else:
                     value_counts = df[target_column].value_counts()
                     for value, count in value_counts.items():
@@ -963,11 +1054,16 @@ def handle_data_upload():
                 st.write("**Visualization:**")
                 if problem_type == "regression":
                     fig, ax = plt.subplots(figsize=(8, 4))
-                    ax.hist(df[target_column], bins=30, alpha=0.7, color='skyblue')
-                    ax.set_xlabel(target_column)
-                    ax.set_ylabel('Frequency')
-                    ax.set_title(f'Distribution of {target_column}')
-                    st.pyplot(fig)
+                    target_numeric = pd.to_numeric(df[target_column], errors='coerce')
+                    target_clean = target_numeric[target_numeric.notna()]
+                    if len(target_clean) > 0:
+                        ax.hist(target_clean, bins=30, alpha=0.7, color='skyblue')
+                        ax.set_xlabel(target_column)
+                        ax.set_ylabel('Frequency')
+                        ax.set_title(f'Distribution of {target_column}')
+                        st.pyplot(fig)
+                    else:
+                        st.warning("No valid numeric data to plot")
                 else:
                     fig, ax = plt.subplots(figsize=(8, 4))
                     value_counts = df[target_column].value_counts()
@@ -1031,6 +1127,10 @@ def handle_model_training():
                 
                 # Train model
                 history = ann_model.train_model(X_train, y_train, X_test, y_test, epochs=epochs)
+                
+                if history is None:
+                    st.error("❌ Model training failed. Please check the error messages above.")
+                    return
                 
                 # Evaluate model
                 evaluation = ann_model.evaluate_model(X_test, y_test)
@@ -1096,6 +1196,9 @@ def handle_model_training():
                         st.metric("RMSE", f"{evaluation['rmse']:.4f}")
                     with col4:
                         st.metric("R² Score", f"{evaluation['r2']:.4f}")
+                    
+                    if 'valid_samples' in evaluation:
+                        st.info(f"✅ Evaluation performed on {evaluation['valid_samples']} valid samples")
                 
                 # Model saving
                 st.subheader("💾 Save Model")
