@@ -506,17 +506,35 @@ class AutoANN:
                 'classification_report': classification_rep
             }
         else:
-            # Regression metrics - FIXED: Ensure both are numeric and handle edge cases
+            # REGRESSION EVALUATION - COMPLETELY FIXED VERSION
             try:
-                # Convert to numeric, handling any conversion issues
-                y_test_numeric = pd.to_numeric(y_test, errors='coerce')
-                predictions_numeric = pd.to_numeric(predictions, errors='coerce')
+                # Debug information
+                st.write("🔍 Debug - Regression Evaluation:")
+                st.write(f"y_test type: {type(y_test)}, shape: {y_test.shape if hasattr(y_test, 'shape') else 'N/A'}")
+                st.write(f"predictions type: {type(predictions)}, shape: {predictions.shape if hasattr(predictions, 'shape') else 'N/A'}")
                 
-                # Remove any NaN values that might have been introduced
-                mask = ~(np.isnan(y_test_numeric) | np.isnan(predictions_numeric))
-                y_test_clean = y_test_numeric[mask]
-                predictions_clean = predictions_numeric[mask]
+                # Convert both to numpy arrays and ensure they are numeric
+                y_test_array = np.array(y_test, dtype=float)
+                predictions_array = np.array(predictions, dtype=float)
                 
+                # Check for any NaN or infinite values
+                y_test_valid = np.isfinite(y_test_array)
+                predictions_valid = np.isfinite(predictions_array)
+                
+                # Combine valid masks
+                valid_mask = y_test_valid & predictions_valid
+                
+                # Count invalid values
+                invalid_count = len(y_test_array) - np.sum(valid_mask)
+                
+                if invalid_count > 0:
+                    st.warning(f"⚠️ Found {invalid_count} invalid values (NaN or infinite) in regression evaluation")
+                
+                # Get valid samples
+                y_test_clean = y_test_array[valid_mask]
+                predictions_clean = predictions_array[valid_mask]
+                
+                # Check if we have any valid data left
                 if len(y_test_clean) == 0:
                     st.error("❌ No valid numeric values for regression evaluation after cleaning")
                     return {
@@ -532,7 +550,7 @@ class AutoANN:
                 mae = mean_absolute_error(y_test_clean, predictions_clean)
                 r2 = r2_score(y_test_clean, predictions_clean)
                 
-                st.info(f"📊 Regression evaluation on {len(y_test_clean)} valid samples (removed {len(y_test) - len(y_test_clean)} invalid samples)")
+                st.info(f"📊 Regression evaluation on {len(y_test_clean)} valid samples (removed {invalid_count} invalid samples)")
                 
                 return {
                     'mse': mse,
@@ -544,6 +562,10 @@ class AutoANN:
                 
             except Exception as e:
                 st.error(f"❌ Error in regression evaluation: {str(e)}")
+                # Provide more detailed error information
+                st.write("Debug info:")
+                st.write(f"y_test sample: {y_test[:5] if hasattr(y_test, '__getitem__') else 'N/A'}")
+                st.write(f"predictions sample: {predictions[:5] if hasattr(predictions, '__getitem__') else 'N/A'}")
                 return {
                     'mse': float('nan'),
                     'mae': float('nan'),
