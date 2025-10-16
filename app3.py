@@ -88,7 +88,15 @@ st.markdown("""
         font-weight: bold;
         text-align: center;
         margin: 10px 0;
-        color: #ffeb3b;
+        color: #ff6b6b;
+    }
+    .binary-selection {
+        text-align: center;
+        padding: 8px;
+        background-color: #e8f5e8;
+        border-radius: 5px;
+        margin: 5px 0;
+        border: 2px solid #4caf50;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -744,18 +752,31 @@ def create_unified_prediction_inputs(df, feature_names, feature_mappings, origin
             elif (col_name in original_columns_info and 
                 original_columns_info[col_name].get('is_binary_numeric', False)):
                 
+                # BINARY NUMERIC COLUMN (0 and 1) - SHOW AS YES/NO DROPDOWN
                 binary_options = [0, 1]
                 binary_labels = {0: "No", 1: "Yes"}
                 
+                st.markdown('<div class="feature-input-group">', unsafe_allow_html=True)
+                st.write(f"**{col_name}** ✅")
+                
                 selected_value = st.selectbox(
-                    f"**{col_name}** 🔢",
+                    f"Select option for {col_name}",
                     options=binary_options,
                     format_func=lambda x: binary_labels[x],
-                    help="Binary numeric feature (No = 0, Yes = 1)",
+                    help="Binary feature - Select Yes or No",
                     key=f"input_{col_name}"
                 )
+                
+                # Show current selection clearly
+                current_selection = binary_labels[selected_value]
+                st.markdown(f'<div class="binary-selection">'
+                          f'<strong>Selected: {current_selection}</strong>'
+                          f'</div>', unsafe_allow_html=True)
+                
+                st.caption("Binary: No = 0, Yes = 1")
+                st.markdown('</div>', unsafe_allow_html=True)
+                
                 input_data[col_name] = selected_value
-                st.caption("Binary Numeric: No = 0, Yes = 1")
                 
             elif col_name in feature_mappings and feature_mappings[col_name]['type'] == 'label':
                 mapping = feature_mappings[col_name]
